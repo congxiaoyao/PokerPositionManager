@@ -1,14 +1,10 @@
 package com.congxiaoyao.util
 
-import java.lang.RuntimeException
-
 open class ListAccessor<T, A : Kind<ListAccessor.K, T>>(
     private val entities: List<T>,
     var pointer: Int = 0) : Kind<ListAccessor.K, T> {
 
     object K {}
-    object Pos : Direction { override fun value() = 1 }
-    object Nag : Direction { override fun value() = -1 }
 
     val end get() = entities.lastIndex
 
@@ -18,31 +14,40 @@ open class ListAccessor<T, A : Kind<ListAccessor.K, T>>(
     fun moveToLast() = --pointer
     fun canAccess() = pointer < entities.size && pointer > 0
 
-    fun accessByRange(start: Int, end: Int,
-                      action: (acc: A, gen: Int, dir: Direction) -> Unit) {
-        val direction = Direction.valueOf(if (start < end) 1 else -1)
-        val times = (end - start) * direction.value() + 1
-        pointer = start
+    inline fun accessByRange(start: Int, end: Int, action: AccessCallback<A>) {
+        val direction = Direction.valueOf(end - start).value()
+        val times = (end - start) * direction + 1
+        var index = start
         repeat(times) {
-            action(this as A, it, direction)
-            pointer += direction.value()
+            pointer = index
+            action(unwrap(), it, direction)
+            index += direction
         }
     }
 
-    fun accessByRange(start: Int, len: Int, direction: Direction,
-                      action: (accessor: A, gen: Int, direction: Direction) -> Unit) {
+    inline fun accessByRange(start: Int, len: Int, direction: Direction, action: AccessCallback<A>) {
         if (len == 0) return
         val endIndex = start + len * direction.value()
         accessByRange(start, endIndex, action)
     }
 
-    interface Direction {
+    fun unwrap() = this as A
+
+    sealed class Direction {
         companion object {
-            fun valueOf(value: Int) = if (value < 0) Nag else if (value > 0) Pos else throw RuntimeException()
+            fun valueOf(value: Int) = if (value < 0) Nag else Pos
         }
-        fun value(): Int
+        abstract fun value(): Int
+
+        object Pos : Direction() {
+            override fun value() = 1
+        }
+        object Nag : Direction() {
+            override fun value() = -1
+        }
     }
 }
+private typealias AccessCallback<A> = ((aac: A, gen: Int, dir: Int) -> Unit)
 
 class ReadableListAccessor<T>(entities: List<T>) : ListAccessor<T, ReadableListAccessor<T>>(entities)
 class WriteableListAccessor<T>(val entities: MutableList<T>) : ListAccessor<T, WriteableListAccessor<T>>(entities) {
