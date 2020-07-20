@@ -5,7 +5,6 @@ import com.congxiaoyao.util.PokerConfig
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.lang.Exception
-import java.util.*
 
 fun main() {
     val frame = PokerFrame()
@@ -20,10 +19,6 @@ fun main() {
         }
     })
     frame.isVisible = true
-
-    for (i in 0 until 0) {
-        println("i")
-    }
 }
 
 private fun resetTestBodies(frame: PokerFrame) {
@@ -36,6 +31,7 @@ private fun resetTestBodies(frame: PokerFrame) {
         selected.forEach { c ->
             frame.panel.bodies.first { it.content == c }.isSelect = true
         }
+        frame.panel.syncSelectStateToLocationManager()
         highlights.forEach { c ->
             frame.panel.bodies.first { it.content == c }.isHighLight = true
         }

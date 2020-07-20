@@ -41,4 +41,8 @@ class Body(val bounds: Rectangle, val content: Char) {
         val padding = (ARC / 2).toInt()
         graphics2D.drawString(content.toString(), roundRect.x + padding, roundRect.y + font.size + padding)
     }
+
+    override fun toString(): String {
+        return content.toString()
+    }
 }

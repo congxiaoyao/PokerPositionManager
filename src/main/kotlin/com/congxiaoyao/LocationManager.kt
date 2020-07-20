@@ -1,5 +1,6 @@
 package com.congxiaoyao
 
+import com.congxiaoyao.util.*
 import java.util.*
 
 class LocationManager<T>(
@@ -8,7 +9,6 @@ class LocationManager<T>(
     private val extraMargin: Int = 0) {
 
     private val entities = mutableListOf<Entity<T>>()
-//    private val entityAccessor = EntityAccessor<T>(entities)
     private val locProxy = object : EntityPropertyAccessor<Int> {
         override fun get(index: Int) = entities[index].location
         override fun set(index: Int, value: Int) {
@@ -23,7 +23,8 @@ class LocationManager<T>(
     }
 
     val width get() = if (entities.isEmpty()) 0 else (interval * entities.size - 1) + elementWidth
-    val sequence: Sequence<Entity<T>> get() = entities.asSequence()
+    val sequence get() = entities.asSequence()
+    private val accessible get() = entities.asAccessible()
 
     /**
      * 将[selected]中的所有[Entity]移动[dis]距离，此方法计算经过移动后所有[Entity]的新位置
@@ -37,7 +38,7 @@ class LocationManager<T>(
      * @param anchor 发生聚合时的聚合中心Entity
      * @param dis 位移值
      */
-    fun moveSelectedEntities(selected: List<Entity<T>>, anchor: Entity<T>, dis: Int) {
+    fun moveSelectedEntitiesOrg(selected: List<Entity<T>>, anchor: Entity<T>, dis: Int) {
         if (selected.isEmpty()) return
         //sort by location
         val target = (selected as? MutableList ?: selected.toMutableList()).apply { sortBy { it.location } }
@@ -64,49 +65,44 @@ class LocationManager<T>(
         if (!isTargetMoved && !isTargetConsecutive) {
             // entities on the right side of anchor
             var offset = 0
-            for (i in entities.lastIndex downTo anchorIndex + 1) {
-                if (bitset[i]) {
+            accessible.drop(anchorIndex + 1).reverse().forEachByRwPointer {
+                if (bitset[it.sourceIndex]) {
                     offset++
                 } else {
-                    val newIndex = i + offset
-                    entities[newIndex] = entities[i]
-                    locProxy[newIndex] = newIndex * interval
+                    it.set(offset, it.get())
                 }
             }
             //entities on the left side of anchor
             offset = 0
-            for (i in 0..anchorIndex) {
-                if (bitset[i]) {
-                    offset++
+            accessible.take(anchorIndex).forEachByRwPointer {
+                if (bitset[it.sourceIndex]) {
+                    offset--
                 } else {
-                    val newIndex = i - offset
-                    entities[newIndex] = entities[i]
-                    locProxy[newIndex] = newIndex * interval
+                    it.set(offset, it.get())
                 }
             }
             //selected entities
-            target.forEachIndexed { index, entity ->
-                val newIndex = index + anchorIndex - offset + 1
-                entities[newIndex] = entity
-                entity.location = newIndex * interval
+            accessible.drop(anchorIndex + offset).take(target.size).forEachByRwPointer {
+                it.set(target[it.accessIndex])
             }
+
+            entities.forEachIndexed { index, entity -> entity.location = index * interval }
+
             bitset = markSelectedIndexes(target)
         }
 
         val minSelectedIndex = bitset.nextSetBit(0)
-        var maxSelectedIndex = minSelectedIndex + selected.size - 1
+        val maxSelectedIndex = minSelectedIndex + selected.size - 1
 
         //ensure extra margin
-        for (i in 0 until minSelectedIndex) {
-            val entity = entities[i]
-            entity.location = i * interval - extraMargin
+        accessible.take(minSelectedIndex).forEachByRwPointer {
+            it.get().location = it.sourceIndex * interval - extraMargin
         }
-        for (i in maxSelectedIndex + 1 until entities.size) {
-            val entity = entities[i]
-            entity.location = i * interval + extraMargin
+        accessible.drop(maxSelectedIndex + 1).forEachByRwPointer {
+            it.get().location = it.sourceIndex * interval + extraMargin
         }
 
-        //move entities TODO(try do it by locProxy)
+        //move entities
         target.forEach { it.location += dis }
 
         //calculate the range of entities on the left of the selected entities that need to be moved to the right
@@ -138,8 +134,96 @@ class LocationManager<T>(
                 entities[newIndex] = target[it]
             }
         }
+    }
 
-        println(markSelectedIndexes(target))
+    fun moveSelectedEntities(selected: List<Entity<T>>, anchor: Entity<T>, dis: Int) {
+        if (selected.isEmpty()) return
+        //sort by location
+        val target = (selected as? MutableList ?: selected.toMutableList()).apply { sortBy { it.location } }
+        //check selected entities's location legal
+        target.asSequence().map { it.location }.forEachWindowed { pre, cur ->
+            if (pre == cur) throw RuntimeException("location重复")
+        }
+        // ensure anchor in selected
+        if (!selected.any { it.location == anchor.location }) {
+            throw RuntimeException("anchor 不在 selected 中")
+        }
+        val isTargetConsecutive = isConsecutiveArranged(target)
+        val anchorIndex = entities.indexOfFirst { anchor.tag == it.tag }
+        val isTargetMoved = anchorIndex * interval != anchor.location
+
+        //something went wrong when selected entities moved and not consecutive
+        if (isTargetMoved && !isTargetConsecutive) {
+            throw RuntimeException("internal error")
+        }
+
+        var bitset = markSelectedIndexes(target)
+
+        //aggregate entities
+        if (!isTargetMoved && !isTargetConsecutive) {
+            // entities on the right side of anchor
+            var offset = 0
+            accessible.drop(anchorIndex + 1).reverse().forEachByRwPointer {
+                if (bitset[it.sourceIndex]) {
+                    offset--
+                } else {
+                    it.set(offset, it.get())
+                }
+            }
+            //entities on the left side of anchor
+            offset = 0
+            accessible.take(anchorIndex).forEachByRwPointer {
+                if (bitset[it.sourceIndex]) {
+                    offset--
+                } else {
+                    it.set(offset, it.get())
+                }
+            }
+            //selected entities
+            accessible.drop(anchorIndex + offset).take(target.size).forEachByRwPointer {
+                it.set(target[it.accessIndex])
+            }
+
+            entities.forEachIndexed { index, entity -> entity.location = index * interval }
+
+            bitset = markSelectedIndexes(target)
+        }
+
+        val minSelectedIndex = bitset.nextSetBit(0)
+        val maxSelectedIndex = minSelectedIndex + selected.size - 1
+
+        //ensure extra margin
+        accessible.take(minSelectedIndex).forEachByRwPointer {
+            it.get().location = it.sourceIndex * interval - extraMargin
+        }
+        accessible.drop(maxSelectedIndex + 1).forEachByRwPointer {
+            it.get().location = it.sourceIndex * interval + extraMargin
+        }
+
+        //move entities
+        target.forEach { it.location += dis }
+
+        val minSelectedLoc = locProxy[minSelectedIndex]
+        val maxSelectedLoc = locProxy[maxSelectedIndex]
+        val movedEntities = if (minSelectedIndex > 0 && minSelectedLoc <= locProxy[minSelectedIndex - 1]) {
+            accessible.select(minSelectedIndex - 1).reverse().extend((locProxy[minSelectedIndex - 1] - minSelectedLoc) / interval)
+        } else if (maxSelectedIndex < entities.lastIndex && maxSelectedLoc >= locProxy[maxSelectedIndex + 1]) {
+            accessible.drop(maxSelectedIndex + 1)
+                .take(1 + (maxSelectedLoc - locProxy[maxSelectedIndex + 1]) / interval)
+        } else null
+        movedEntities?.forEachByRwPointer {
+            val dir = movedEntities.direction
+            val offset = -target.size
+            it.set(offset, it.get())
+            it.get().location = it.sourceIndex(offset) * interval - dir(extraMargin)
+        }
+        val targetAcc = movedEntities?.let {
+            target.asAccessible().reverseTo(-movedEntities.direction)
+        }
+        movedEntities?.reverse()?.takeOrExtend(target.size)?.forEachByRwPointer {
+            it.set(targetAcc!![it.accessIndex])
+        }
+//        println(this)
     }
 
     private fun markSelectedIndexes(selected: List<Entity<T>>): BitSet {
@@ -228,7 +312,28 @@ class LocationManager<T>(
         }
     }
 
-    class Entity<T>(var location: Int, var tag: T)
+    override fun toString(): String {
+        return buildString {
+            append("(")
+            if (entities.isNotEmpty()) {
+                append(entities.first().toString())
+                if (entities.size > 1) {
+                    entities.drop(1).forEach {
+                        append(",")
+                        append(it.toString())
+                    }
+                }
+            }
+            append(")")
+        }
+    }
+
+    class Entity<T>(var location: Int, var tag: T) {
+        override fun toString(): String {
+            return "$tag($location)"
+        }
+    }
+
 
     private interface EntityPropertyAccessor<T> {
         operator fun get(index: Int): T

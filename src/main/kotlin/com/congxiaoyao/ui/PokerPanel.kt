@@ -1,19 +1,21 @@
 package com.congxiaoyao.ui
 
-import com.congxiaoyao.LocationManager
+import com.congxiaoyao.HandCardModel
+import com.congxiaoyao.util.forEach
 import java.awt.Color
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
+import java.lang.Exception
 import javax.swing.JFrame
 import javax.swing.JPanel
 
 
 class PokerPanel(frame: JFrame) : JPanel() {
 
-    companion object{
+    companion object {
         private const val elementWidth = 100
         private const val interval = 30
         private val renderingHints = mapOf(
@@ -22,7 +24,7 @@ class PokerPanel(frame: JFrame) : JPanel() {
         )
     }
 
-    private val locationManager: LocationManager<Body> = LocationManager(interval, elementWidth,10)
+    private val locationManager: HandCardModel<Body> = HandCardModel(interval, elementWidth, 10)
 
     val bodies = mutableListOf<Body>()
     var moveRef = 0
@@ -32,16 +34,22 @@ class PokerPanel(frame: JFrame) : JPanel() {
         frame.addKeyListener(DeletePokerHandler())
         frame.addKeyListener(SpaceHandler())
 
-        frame.addKeyListener(PokerFrame.MoveDetector(50, 160, object : MoveListener {
+        frame.addKeyListener(PokerFrame.MoveDetector(5, 160, object : MoveListener {
             override fun onMove(dx: Int, dy: Int, isShiftDown: Boolean) {
                 if (isShiftDown) {
                     moveRef = dx
-                } else {
-                    val selected = bodies.filter { it.isSelect }.mapNotNull { locationManager.findByTag(it) }
-                    val anchor = bodies.find { it.isHighLight }?.let { locationManager.findByTag(it) } ?: return
-                    locationManager.moveSelectedEntities(selected, anchor, dx)
-                    moveRef = 0
+                    repaint()
+                    return
                 }
+                try {
+                    if (locationManager.isNormalState) {
+                        locationManager.aggregate(bodies.first { it.isHighLight })
+                    }
+                    locationManager.moveAndSort(dx)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                moveRef = 0
                 repaint()
             }
 
@@ -64,7 +72,7 @@ class PokerPanel(frame: JFrame) : JPanel() {
         g.translate((panelWidth - bodiesWidth) / 2, (panelHeight - bodyHeight) / 2)
 
         //update bounds
-        locationManager.sequence.forEach {
+        locationManager.entities.forEach {
             it.tag.bounds.x = it.location
         }
         bodies.sortBy { it.bounds.x }
@@ -87,12 +95,12 @@ class PokerPanel(frame: JFrame) : JPanel() {
         if (moveRef < 0) {
             val bounds = bodies.first { it.isSelect }.bounds
             val x = bounds.x + moveRef
-            val y = bounds.y - bounds.height/2
+            val y = bounds.y - bounds.height / 2
             g.drawLine(x, y, x, y + bounds.height * 2)
         } else if (moveRef > 0) {
             val bounds = bodies.last { it.isSelect }.bounds
             val x = bounds.x + moveRef
-            val y = bounds.y - bounds.height/2
+            val y = bounds.y - bounds.height / 2
             g.drawLine(x, y, x, y + bounds.height * 2)
         }
     }
@@ -110,6 +118,16 @@ class PokerPanel(frame: JFrame) : JPanel() {
         bodies.clear()
     }
 
+    fun syncSelectStateToLocationManager() {
+        bodies.forEach {
+            if (it.isSelect) {
+                locationManager.select(it)
+            } else {
+                locationManager.unSelect(it)
+            }
+        }
+    }
+
     inner class SelectPokerHandler : KeyAdapter() {
         private val numberCodes = 48..57
         override fun keyPressed(e: KeyEvent) {
@@ -121,6 +139,7 @@ class PokerPanel(frame: JFrame) : JPanel() {
                     body.isHighLight = !body.isHighLight
                 } else {
                     body.isSelect = !body.isSelect
+                    locationManager.toggleSelect(body)
                 }
                 repaint()
             }
@@ -133,7 +152,7 @@ class PokerPanel(frame: JFrame) : JPanel() {
                 val selectedBodies = bodies.filter { it.isHighLight }
                 bodies.removeAll(selectedBodies)
                 selectedBodies.forEach {
-                    locationManager.removeByTag(it)
+//                    locationManager.removeByTag(it)
                 }
                 repaint()
             }
@@ -142,12 +161,9 @@ class PokerPanel(frame: JFrame) : JPanel() {
 
     inner class SpaceHandler : KeyAdapter() {
         override fun keyPressed(e: KeyEvent) {
-            if (e.keyCode == KeyEvent.VK_SPACE) {
-                val selected = bodies.filter { it.isSelect }
-                    .map { locationManager.findByTag(it) }
-                    .filterNotNull()
-                val anchor = bodies.find { it.isHighLight }?.let { locationManager.findByTag(it) } ?: return
-                locationManager.moveSelectedEntities(selected, anchor,-10)
+            if (e.keyCode != KeyEvent.VK_SPACE) return
+            if (locationManager.isSorting) {
+                locationManager.cancelSorting()
                 repaint()
             }
         }
